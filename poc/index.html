@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TailSight TS-G1 PoC — 調査追跡HUDシミュレータ</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #11161d; --panel2: #161d26; --line: #232c38;
+    --green: #3f6; --green-dim: #295c3f; --cyan: #39d0ff; --red: #ff5f6d; --yellow: #ffd166;
+    --text: #d7dee8; --muted: #7b8794;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", sans-serif; font-size: 14px; }
+  .hidden { display: none !important; }
+
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 10px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header .logo { font-weight: 700; letter-spacing: 1px; }
+  header .logo span { color: var(--green); }
+  header .case { color: var(--muted); }
+  .rec { display: inline-flex; align-items: center; gap: 6px; font-family: monospace; color: var(--red); }
+  #recDot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); display: inline-block; }
+  #recDot.off { background: var(--muted); }
+  #recTime { color: var(--text); font-family: monospace; }
+  .badge { padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+  .badge.track { background: #10331c; color: var(--green); }
+  .badge.lost { background: #3a1418; color: var(--red); }
+  header .spacer { flex: 1; }
+  header .note { color: var(--muted); font-size: 12px; }
+
+  main { display: grid; grid-template-columns: 1fr 440px; gap: 12px; padding: 12px; height: calc(100vh - 57px - 34px); }
+  #mapWrap { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  #map { width: 100%; height: 100%; }
+  #radarCanvas { position: absolute; inset: 0; width: 100%; height: 100%; background: #050805; }
+  .mapStatus {
+    position: absolute; left: 10px; bottom: 10px; z-index: 500;
+    background: rgba(5, 8, 12, 0.82); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 10px; font-family: monospace; font-size: 12px; color: var(--muted); line-height: 1.7;
+  }
+  .inv-icon { color: var(--cyan); font-size: 22px; text-align: center; line-height: 26px; text-shadow: 0 0 6px rgba(57,208,255,.8); }
+
+  aside { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+
+  /* HUD (Rokid 緑単色ディスプレイ想定) */
+  .hud {
+    background: #04120a; border: 1px solid var(--green-dim); border-radius: 8px;
+    color: var(--green); font-family: "SF Mono", Menlo, monospace;
+    padding: 12px 14px; position: relative; overflow: hidden;
+    box-shadow: inset 0 0 40px rgba(51,255,153,0.06);
+  }
+  .hud::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(0deg, rgba(51,255,153,0.04) 0 1px, transparent 1px 3px);
+  }
+  .hud .row { display: flex; justify-content: space-between; align-items: center; margin: 4px 0; }
+  .hud .top { border-bottom: 1px dashed var(--green-dim); padding-bottom: 6px; margin-bottom: 8px; font-size: 12px; }
+  .hud .center { display: flex; align-items: center; gap: 18px; padding: 6px 0 10px; }
+  #hudArrowWrap { width: 84px; height: 84px; border: 1px solid var(--green-dim); border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+  #hudArrow { font-size: 40px; transition: transform .4s; text-shadow: 0 0 10px rgba(51,255,153,.9); }
+  .hud .big { font-size: 26px; font-weight: 700; }
+  .hud .sub { font-size: 12px; opacity: .85; }
+  .hud-risk { min-height: 20px; font-weight: 700; }
+  .hud-risk.ok { color: var(--green); }
+  .hud-risk.warn { color: var(--yellow); }
+  .hud-risk.critical { color: var(--red); animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+  #voiceLog { min-height: 34px; font-size: 11px; opacity: .85; margin-top: 6px; border-top: 1px dashed var(--green-dim); padding-top: 6px; }
+  .packet {
+    margin-top: 8px; border-top: 1px dashed var(--green-dim); padding-top: 6px;
+    font-size: 10px; line-height: 1.5; opacity: .75; white-space: pre-wrap; overflow-x: auto;
+  }
+  .hud.g2 { text-align: center; }
+  .hud.g2 .row { justify-content: center; }
+  .hud.g2 .top { justify-content: space-between; }
+  .deviceRow { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .deviceRow span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .deviceRow select { flex: 1; }
+  #antenna { display: none; font-size: 16px; }
+  #antenna.on { display: inline-block; animation: antPulse 1.2s infinite; }
+  @keyframes antPulse { 0% { opacity: .35; text-shadow: none; } 50% { opacity: 1; text-shadow: 0 0 8px var(--green); } }
+  #bootOverlay { position: fixed; inset: 0; background: #010604; z-index: 3000; display: flex; align-items: center; justify-content: center; }
+  #bootOverlay pre { color: var(--green); font-family: "SF Mono", Menlo, monospace; font-size: 16px; line-height: 2.1; text-shadow: 0 0 8px rgba(51,255,153,.8); }
+  .deduce { font-family: monospace; color: var(--cyan); font-size: 13px; margin-bottom: 6px; }
+  .deduceSum { color: var(--muted); font-size: 12px; line-height: 1.7; }
+  #replayRange { width: 100%; accent-color: var(--cyan); }
+  #reportModal { position: fixed; inset: 0; background: rgba(4,6,10,.85); z-index: 2600; display: flex; align-items: center; justify-content: center; }
+  .reportBox { background: #fff; color: #111; border-radius: 8px; width: 840px; max-width: 94vw; max-height: 84vh; overflow: auto; padding: 28px 32px; }
+  .reportBox h3 { color: #1a3d5c; margin: 14px 0 6px; font-size: 14px; }
+  .reportBox p { font-size: 13px; line-height: 1.8; color: #222; }
+  .rmeta, .rtl { width: 100%; border-collapse: collapse; font-size: 12px; color: #222; }
+  .rmeta th, .rtl th { background: #eef2f6; color: #333; text-align: left; padding: 5px 8px; border: 1px solid #d5dde5; font-weight: 600; }
+  .rmeta td, .rtl td { padding: 5px 8px; border: 1px solid #d5dde5; vertical-align: top; }
+  .reportActions { display: flex; gap: 8px; margin-top: 14px; }
+  /* 装着視界シミュレータ */
+  #eyeView { position: fixed; inset: 0; background: #000; z-index: 2800; }
+  #eyeView::after { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 180px rgba(0,0,0,.85); }
+  #eyeCanvas { width: 100%; height: 100%; display: block; cursor: grab; }
+  #eyeCanvas:active { cursor: grabbing; }
+  .eyehud { position: absolute; pointer-events: none; color: var(--green); font-family: "SF Mono", Menlo, monospace; text-shadow: 0 0 10px rgba(51,255,153,.75); }
+  .eyehud.g2 { top: 13%; left: 50%; transform: translateX(-50%); width: 44%; text-align: center; font-size: 15px; line-height: 1.9; letter-spacing: 1px; }
+  .eyehud.rokid { top: 58%; left: 55%; transform: translate(-50%, -50%); border: 1px solid rgba(63,246,102,.45); background: rgba(2,10,4,.35); border-radius: 12px; padding: 12px 16px; min-width: 250px; backdrop-filter: blur(1px); }
+  .eyeArrow { transition: transform .25s; }
+  .eyeTop { position: absolute; top: 12px; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 0 16px; color: var(--muted); font-size: 13px; }
+  .eyeTop .eyeRec { color: var(--red); font-family: monospace; display: flex; align-items: center; gap: 6px; }
+  .eyeTop .eyeRec .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); animation: blink 1.4s infinite; }
+  .eyeDev { background: rgba(16,51,28,.8); color: var(--green); border-radius: 10px; padding: 2px 12px; font-size: 12px; }
+  .eyeHint { position: absolute; bottom: 12px; left: 0; right: 0; text-align: center; color: var(--muted); font-size: 12px; pointer-events: none; }
+  @media print {
+    body > *:not(#reportModal) { display: none !important; }
+    #reportModal { position: static; display: block; background: none; }
+    .reportBox { width: auto; max-height: none; box-shadow: none; }
+    .reportActions { display: none !important; }
+  }
+
+  .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  button, select, input {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 7px 8px; font-size: 13px; cursor: pointer;
+    white-space: nowrap;
+  }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.active { border-color: var(--cyan); color: var(--cyan); }
+  button.danger { border-color: #5c2a30; color: var(--red); }
+  button.photo { border-color: #2a5c46; color: var(--green); }
+  .memoRow { display: flex; gap: 8px; margin-top: 8px; }
+  .memoRow input { flex: 1; }
+  .verify { margin-top: 8px; font-size: 12px; font-family: monospace; }
+  .verify.ok { color: var(--green); }
+  .verify.ng { color: var(--red); }
+
+  .card h3 { font-size: 13px; color: var(--muted); font-weight: 600; margin-bottom: 8px; letter-spacing: .5px; }
+  .evWrap { max-height: 300px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { position: sticky; top: 0; background: var(--panel2); color: var(--muted); text-align: left; padding: 5px 6px; font-weight: 600; }
+  td { padding: 5px 6px; border-top: 1px solid var(--line); font-family: monospace; vertical-align: top; }
+  td.hash { color: var(--muted); font-size: 11px; }
+
+  footer { padding: 8px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; background: var(--panel); }
+
+  /* consent modal */
+  #consentModal {
+    position: fixed; inset: 0; background: rgba(4, 6, 10, 0.9); z-index: 2000;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .modalBox { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; width: 520px; max-width: 92vw; padding: 24px; }
+  .modalBox h2 { font-size: 17px; margin-bottom: 4px; }
+  .modalBox .lead { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+  .modalBox label { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px; cursor: pointer; font-size: 13px; line-height: 1.5; }
+  .modalBox label.ok { border-color: var(--green-dim); }
+  #btnStartSession { width: 100%; margin-top: 12px; padding: 12px; font-size: 15px; font-weight: 700; background: #10331c; border-color: var(--green-dim); color: var(--green); }
+  .legal { font-size: 11px; color: var(--muted); margin-top: 12px; line-height: 1.6; }
+
+  #toast {
+    position: fixed; top: 64px; right: 16px; z-index: 1500; background: var(--panel2);
+    border: 1px solid var(--cyan); color: var(--text); padding: 8px 14px; border-radius: 6px;
+    font-size: 13px; opacity: 0; transition: opacity .25s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">TailSight <span>TS-G1</span></div>
+  <span id="antenna">📡</span>
+  <div class="badge track" id="modeBadge">待機</div>
+  <div class="case">案件 <span id="caseId">-----</span> ・ 調査員A</div>
+  <div class="spacer"></div>
+  <div class="rec"><span id="recDot" class="off"></span> REC <span id="recTime">--:--</span></div>
+  <div class="note">PoC — 全データ模擬</div>
+</header>
+
+<main>
+  <div id="mapWrap">
+    <div id="map"></div>
+    <canvas id="radarCanvas" width="900" height="700" class="hidden"></canvas>
+    <div class="mapStatus">
+      調査員 <span id="invPos">---</span><br>
+      対象(Tracker TRK-4417) <span id="tgtPos">---</span>
+    </div>
+  </div>
+
+  <aside>
+    <div class="card hud" id="hudCard">
+      <div class="row top">
+        <span>▶ TRACKING HUD</span>
+        <span id="hudLte">LTE ▮▮▮▮</span>
+      </div>
+      <div class="row center">
+        <div id="hudArrowWrap"><span id="hudArrow" style="display:inline-block">▲</span></div>
+        <div>
+          <div class="big" id="hudDistance">--- m</div>
+          <div class="sub" id="hudBearing">--- </div>
+          <div class="sub" id="hudEta">徒歩 ---</div>
+        </div>
+      </div>
+      <div class="row"><span>対象</span><span id="hudTargetStatus">---</span></div>
+      <div class="row"><span>予測</span><span id="hudPredict">---</span></div>
+      <div class="row"><span id="hudPosAge">位置情報 ---</span><span id="hudBattery">電池 ---</span></div>
+      <div class="hud-risk ok" id="hudRisk">待機中</div>
+      <div id="voiceLog">🎙 音声コマンド待機…</div>
+      <pre class="packet" id="packetPre"></pre>
+    </div>
+
+    <div class="card">
+      <h3>操作</h3>
+      <div class="deviceRow">
+        <span>装着デバイス</span>
+        <select id="selDevice">
+          <option value="rokid" selected>Rokid Glasses（カメラ内蔵）</option>
+          <option value="evenG2">Even Realities G2（カメラなし）</option>
+        </select>
+      </div>
+      <div class="controls">
+        <button id="btnModeAuto" class="active" disabled>自動追跡</button>
+        <button id="btnModeManual" disabled>手動移動</button>
+        <button id="btnFaceTarget" disabled>対象を向く</button>
+        <select id="selVoice" disabled>
+          <option value="">🎙 音声…</option>
+          <option>追跡開始</option>
+          <option>状況</option>
+          <option>証拠保存</option>
+          <option>見失った</option>
+          <option>再捕捉</option>
+        </select>
+        <button id="btnPhoto" class="photo" disabled>証拠撮影</button>
+        <button id="btnVerifySubj" disabled>本人確認</button>
+        <button id="btnDeclareLost" class="danger" disabled>見失い申告</button>
+        <button id="btnAudioLink" disabled>事務所と通話</button>
+        <button id="btnEndSession" class="danger">セッション終了</button>
+        <button id="btnExport">チェーン書出</button>
+        <button id="btnVerify">改竄検証</button>
+        <button id="btnTts" class="active">🔊 読上げON</button>
+        <button id="btnReplay" disabled>⏱ リプレイ</button>
+        <button id="btnHeat" disabled>🔥 滞在分析</button>
+        <button id="btnReport" disabled>📄 報告書生成</button>
+        <button id="btnEyeView" disabled>👁 装着視界</button>
+      </div>
+      <div class="memoRow">
+        <input id="inpMemo" placeholder="メモ (調査員の発話・観察を記録)" disabled>
+        <button id="btnMemo" disabled>記録</button>
+      </div>
+      <div class="controls" style="margin-top:8px; grid-template-columns: auto 1fr; align-items:center;">
+        <span style="color:var(--muted);font-size:12px;">対象速度</span>
+        <select id="selSpeed">
+          <option value="0.5">×0.5 (徐行)</option>
+          <option value="1" selected>×1 (徒歩)</option>
+          <option value="4">×4 (車両)</option>
+        </select>
+      </div>
+      <div class="verify" id="verifyResult"></div>
+    </div>
+
+    <div class="card">
+      <h3>推理エンジン DEDUCE — 行動予測</h3>
+      <div class="deduce" id="deducePred">解析待ち…</div>
+      <div class="deduceSum" id="deduceSummary">セッション開始後、移動パターンから次の行動を予測します。</div>
+    </div>
+
+    <div class="card">
+      <h3>事務所コンソール → 調査員HUDへプッシュ</h3>
+      <div class="controls">
+        <button id="btnOfficeWarn" class="danger" disabled>⚠ 接近注意</button>
+        <button id="btnOfficeDetour" disabled>↩ 迂回指示</button>
+        <button id="btnOfficeAbort" class="danger" disabled>■ 調査中断</button>
+      </div>
+    </div>
+
+    <div class="card hidden" id="replayBar">
+      <h3>⏱ リプレイ <span id="replayTime" style="color:var(--cyan)">00:00</span></h3>
+      <input type="range" id="replayRange" min="0" max="0" value="0">
+      <div class="controls" style="margin-top:8px">
+        <button id="btnReplayPlay">▶ 再生</button>
+        <button id="btnReplayExit">ライブに戻る</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>証拠チェーン (Chain of Custody) — <span id="evCount">0</span>件</h3>
+      <div class="evWrap">
+        <table>
+          <thead><tr><th>#</th><th>時刻</th><th>種類</th><th>概要</th><th>ハッシュ</th><th>端末</th></tr></thead>
+          <tbody id="evBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  TailSight TS-G1 PoC — 依頼者所有車両への同意取得済みGPS調査・公開場所での調査を模擬。
+  音声は調査員自身の発話メモのみ。盗聴・無断追跡機能は仕様上存在しない。実装: evidence-chain.js (SHA-256チェーン)。
+</footer>
+
+<div id="consentModal">
+  <div class="modalBox">
+    <h2>調査セッション開始ゲート</h2>
+    <div class="lead">TailSight はコンプライアンス確認を通過しない限りセッションを開始できません。(案件 CASE-2026-0007 / 同意書 CONS-2026-0118)</div>
+    <label><input type="checkbox" class="consent-check">
+      対象トラッカー (TRK-4417) は<b>依頼者所有の車両</b>に取り付けられたものであり、依頼者の同意宣誓書 (CONS-2026-0118) が有効であることを確認しました。</label>
+    <label><input type="checkbox" class="consent-check">
+      本調査は<b>公開場所</b>での観察・撮影を対象とし、住居等の私空間には立ち入りません。</label>
+    <label><input type="checkbox" class="consent-check">
+      音声記録は<b>調査員自身の発話メモのみ</b>に限定し、第三者の会話を録音しません。</label>
+    <button id="btnStartSession" disabled>上記を確認の上、セッションを開始</button>
+    <div class="legal">※ 本画面は PoC デモです。位置・軌跡はすべて模擬データであり、実在の人物・車両とは無関係です。
+    実運用では各確認は電子署名付きで記録・保存されます（設計書 §3 / §8）。</div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<div id="bootOverlay" class="hidden"><pre id="bootText"></pre></div>
+
+<div id="eyeView" class="hidden">
+  <canvas id="eyeCanvas"></canvas>
+  <div id="eyeHudG2" class="eyehud g2 hidden"></div>
+  <div id="eyeHudRokid" class="eyehud rokid hidden"></div>
+  <div class="eyeTop">
+    <span class="eyeDev" id="eyeDevLabel" style="cursor:pointer" title="クリックでデバイス切替">Rokid Glasses</span>
+    <span class="eyeRec"><span class="dot"></span>REC <span id="eyeRecTime">--:--</span></span>
+    <button id="btnEyeClose">閉じる (ESC)</button>
+  </div>
+  <div class="eyeHint">ドラッグ=首を振る · ダブルクリック=対象を正面に · 装着デバイスは右パネルの選択に追従</div>
+</div>
+
+<div id="reportModal" class="hidden">
+  <div class="reportBox">
+    <div id="reportBody"></div>
+    <div class="reportActions">
+      <button id="btnReportPrint">印刷</button>
+      <button id="btnReportDl">HTML保存</button>
+      <button id="btnReportClose">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<script src="evidence-chain.js?v=2"></script>
+<script src="device-adapters.js?v=2"></script>
+<script src="app.js?v=6"></script>
+</body>
+</html>
