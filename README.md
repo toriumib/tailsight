@@ -63,6 +63,7 @@ Rokid Glasses / Even G2 (薄い表示・入力端末) ─┤→ コンパニオ�
 - 証拠チェーン: `hash = SHA-256(prevHash | canonical_json(entry))`、正準化JSONでキー順差異に耐性
 
 Even G2 実機シミュレータ（公式 `@evenrealities/evenhub-simulator`）での開発手順は[設計書 §5](docs/system-design.md)参照。
+単体のHUDプレビューアは別リポジトリで公開: [toriumib/tailsight-device-preview](https://github.com/toriumib/tailsight-device-preview)（Rokid / Even G2 装着視界シミュレータ・スタンドアロン）。
 
 ## コントリビュート
 
