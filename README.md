@@ -5,6 +5,8 @@ Rokid Glasses と Even Realities G2 の両方に対応した、探偵事務所�
 
 *Turn Detective Conan's "criminal-tracking glasses" into a lawful professional tool for licensed investigators — dual-platform (Rokid Glasses / Even Realities G2) smart glasses tracking system with an tamper-evident evidence chain.*
 
+🎬 **デモ動画 (44s)**: https://github.com/toriumib/tailsight/releases/tag/v1.1
+
 ---
 
 ## ⚠️ 重要 / Important
